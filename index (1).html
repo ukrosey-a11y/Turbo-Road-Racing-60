@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Turbo Road: 60 Level Car Racing</title>
+<style>
+:root{--gold:#ffd21a;--orange:#f47712;--bg:#121416;--panel:#24282d;--road:#42474d}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#26313b,#101214 70%);color:#fff;font-family:Arial,Helvetica,sans-serif;display:flex;justify-content:center;min-height:100vh}
+.wrap{width:min(980px,100%);padding:14px}
+.top{display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+h1{font-size:clamp(20px,4vw,34px);margin:4px 0;color:#ffd21a;text-shadow:0 2px #000}
+.stats{display:flex;gap:8px;flex-wrap:wrap}
+.badge{background:#252a30;border:2px solid #e4b800;border-radius:12px;padding:9px 12px;font-weight:700}
+.gamebox{position:relative;margin-top:10px;border:3px solid #e5bc00;border-radius:18px;overflow:hidden;box-shadow:0 0 25px #000;background:#20252a}
+canvas{display:block;width:100%;height:auto;background:#4c5358;touch-action:none}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#0009;text-align:center;padding:22px}
+.card{max-width:430px;background:#20252a;border:2px solid #ffd21a;border-radius:18px;padding:22px;box-shadow:0 8px 35px #000}
+.card h2{margin-top:0;color:#ffd21a}
+button,select{border:0;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer}
+button{background:linear-gradient(#ff921d,#df5d00);color:#fff;box-shadow:0 4px #8e3600}
+button:active{transform:translateY(2px);box-shadow:0 2px #8e3600}
+button.secondary{background:#39424b;box-shadow:0 4px #20252a}
+.controls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin:12px auto;max-width:650px}
+.controls button{min-height:58px;font-size:16px}
+.controls .wide{grid-column:span 3}
+.help{background:#1c2025;border:1px solid #555;border-radius:12px;padding:12px;line-height:1.5;color:#dce2e8}
+.progress{height:10px;background:#343b42;border-radius:99px;overflow:hidden;margin-top:8px}
+.progress>div{height:100%;background:linear-gradient(90deg,#ffd21a,#ff7214);width:0%}
+.hidden{display:none!important}
+.small{font-size:13px;color:#bfc6ce}
+@media(min-width:700px){.controls{grid-template-columns:repeat(6,1fr)}.controls .wide{grid-column:span 6}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>🏎️ Turbo Road Racing 🏁</h1>
+    <div class="stats">
+      <div class="badge">🏆 Score: <span id="score">0</span></div>
+      <div class="badge">⭐ Level: <span id="level">1</span>/60</div>
+      <div class="badge">⚙️ Gear: <span id="gear">N</span></div>
+    </div>
+  </div>
+  <div class="progress"><div id="progress"></div></div>
+  <div class="gamebox">
+    <canvas id="game" width="720" height="920" aria-label="Car racing game"></canvas>
+    <div id="overlay" class="overlay">
+      <div class="card">
+        <h2 id="overlayTitle">Ready, Driver?</h2>
+        <p id="overlayText">Complete 60 levels. Avoid traffic, collect coins and reach the finish line.</p>
+        <button id="startBtn">▶ Start Game</button>
+      </div>
+    </div>
+  </div>
+  <div class="controls">
+    <button data-key="ArrowLeft">◀ LEFT</button>
+    <button data-key="ArrowUp">▲ ACCELERATE</button>
+    <button data-key="ArrowRight">RIGHT ▶</button>
+    <button data-key="ArrowDown">▼ BRAKE / REVERSE</button>
+    <button data-key="Space">⏸ NITRO</button>
+    <button data-key="KeyG">⚙️ CHANGE GEAR</button>
+    <button class="wide secondary" id="pauseBtn">⏸ Pause / Resume</button>
+  </div>
+  <div class="help">
+    <b>Controls:</b> Keyboard: Arrow keys to steer and move, <b>Space</b> for nitro, <b>G</b> to change gear, <b>P</b> to pause.
+    On mobile, use the buttons. Collect ⭐ coins, avoid 🚗 traffic and cross the finish distance to unlock the next level.
+    <div class="small">Tip: Reverse works in R gear. Gear order: N → D → R → N.</div>
+  </div>
+</div>
+<script>
+(() => {
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const W=canvas.width,H=canvas.height;
+const $=id=>document.getElementById(id);
+let running=false,paused=false,last=0,score=0,level=1,gear=0,distance=0,roadOffset=0,nitro=100;
+let player={x:W/2,y:H-145,w:52,h:92,speed:0};
+let traffic=[],coins=[],particles=[],keys={};
+const gears=['N','D','R'];
+const colors=['#ef3b35','#3a8df0','#f6c945','#ad62e8','#35c878','#f48b35'];
+
+function levelData(){return {target:850+level*95,traffic:2+Math.floor(level/4),speed:2.1+level*.055,coinCount:3+Math.floor(level/3)}}
+function resetLevel(){
+ const d=levelData(); distance=0;roadOffset=0;nitro=100;gear=1;
+ player.x=W/2;player.speed=0;traffic=[];coins=[];particles=[];
+ for(let i=0;i<d.traffic;i++) traffic.push({x:laneX(),y:-100-Math.random()*H,w:48,h:86,s:d.speed*(.65+Math.random()*.8),c:colors[Math.floor(Math.random()*colors.length)]});
+ for(let i=0;i<d.coinCount;i++) coins.push({x:laneX(),y:-180-Math.random()*H,r:13,got:false});
+ updateHud();
+}
+function laneX(){return W*.29+Math.floor(Math.random()*3)*(W*.21)}
+function updateHud(){
+ $('score').textContent=score;$('level').textContent=level;$('gear').textContent=gears[gear];
+ $('progress').style.width=Math.min(100,distance/levelData().target*100)+'%';
+}
+function roundedRect(x,y,w,h,r,fill,stroke){
+ ctx.beginPath();ctx.roundRect(x,y,w,h,r);if(fill){ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}
+}
+function drawRoad(){
+ ctx.fillStyle='#4d7b43';ctx.fillRect(0,0,W,H);
+ ctx.fillStyle='#30363b';ctx.fillRect(W*.16,0,W*.68,H);
+ ctx.fillStyle='#bfc2c4';ctx.fillRect(W*.16,0,8,H);ctx.fillRect(W*.84-8,0,8,H);
+ ctx.strokeStyle='#f8e28a';ctx.lineWidth=5;ctx.setLineDash([42,36]);ctx.lineDashOffset=roadOffset;
+ for(let i=1;i<3;i++){ctx.beginPath();ctx.moveTo(W*.16+i*W*.226,0);ctx.lineTo(W*.16+i*W*.226,H);ctx.stroke()}
+ ctx.setLineDash([]);
+}
+function drawCar(c,x,y,w,h,playerCar=false){
+ ctx.save();ctx.translate(x,y);
+ ctx.shadowColor='#0009';ctx.shadowBlur=10;ctx.shadowOffsetY=5;
+ roundedRect(-w/2,-h/2,w,h,12,c);
+ ctx.shadowBlur=0;ctx.shadowOffsetY=0;
+ roundedRect(-w*.31,-h*.28,w*.62,h*.25,6,'#9bd6e7');
+ roundedRect(-w*.31,h*.04,w*.62,h*.21,6,'#6ca2b5');
+ ctx.fillStyle='#101317';
+ ctx.fillRect(-w/2-4,-h*.27,7,h*.22);ctx.fillRect(w/2-3,-h*.27,7,h*.22);
+ ctx.fillRect(-w/2-4,h*.12,7,h*.22);ctx.fillRect(w/2-3,h*.12,7,h*.22);
+ ctx.fillStyle=playerCar?'#fff1a6':'#ff5a43';ctx.fillRect(-w*.29,-h*.43,w*.18,6);ctx.fillRect(w*.11,-h*.43,w*.18,6);
+ ctx.restore();
+}
+function drawCoin(c){
+ ctx.save();ctx.translate(c.x,c.y);ctx.rotate(Math.sin(c.y*.03)*.2);
+ ctx.fillStyle='#ffd21a';ctx.strokeStyle='#fff2a3';ctx.lineWidth=4;ctx.beginPath();ctx.arc(0,0,c.r,0,Math.PI*2);ctx.fill();ctx.stroke();
+ ctx.fillStyle='#8b5b00';ctx.font='bold 16px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('★',0,1);ctx.restore();
+}
+function spawnParticle(x,y){
+ particles.push({x,y,life:1,vx:(Math.random()-.5)*2,vy:Math.random()*2+1});
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);drawRoad();
+ for(const c of coins)if(!c.got)drawCoin(c);
+ for(const t of traffic)drawCar(t.c,t.x,t.y,t.w,t.h);
+ drawCar('#e9e9ed',player.x,player.y,player.w,player.h,true);
+ for(const p of particles){ctx.globalAlpha=p.life;ctx.fillStyle='#ffd21a';ctx.fillRect(p.x,p.y,4,4);ctx.globalAlpha=1}
+ ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='left';ctx.fillText('DISTANCE '+Math.floor(distance)+' / '+levelData().target,18,34);
+ ctx.fillStyle='#111a';ctx.fillRect(18,48,170,12);ctx.fillStyle='#37d67a';ctx.fillRect(18,48,170*(nitro/100),12);
+ ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.fillText('NITRO',194,58);
+}
+function collide(a,b){
+ return Math.abs(a.x-b.x)<(a.w+b.w)*.42 && Math.abs(a.y-b.y)<(a.h+b.h)*.42;
+}
+function endLevel(){
+ running=false;paused=false;
+ if(level>=60){showOverlay('🏆 You Finished All 60 Levels!','Amazing driving! Final score: '+score,'Play Again',()=>{score=0;level=1;resetLevel();start()});return}
+ level++;score+=500;resetLevel();
+ showOverlay('🎉 Level Complete!','Bonus +500. Get ready for level '+level+'.','Next Level',start);
+}
+function crash(){
+ running=false;score=Math.max(0,score-100);
+ showOverlay('💥 Crash!','You lost 100 points. Try the level again.','Retry Level',()=>{resetLevel();start()});
+}
+function update(dt){
+ if(!running||paused)return;
+ const d=levelData();
+ const accel=gear===1?0.12:gear===2?-0.10:0;
+ if(keys.ArrowUp&&gear===1)player.speed=Math.min(8.8,player.speed+accel*dt);
+ if(keys.ArrowDown){if(gear===2)player.speed=Math.max(-4,player.speed-.16*dt);else player.speed=Math.max(0,player.speed-.22*dt)}
+ if(!keys.ArrowUp&&!keys.ArrowDown)player.speed*=Math.pow(.985,dt);
+ if(keys.Space&&nitro>0&&gear===1){player.speed=Math.min(13,player.speed+.18*dt);nitro=Math.max(0,nitro-.7*dt)}
+ else nitro=Math.min(100,nitro+.08*dt);
+ const steer=(keys.ArrowLeft?-1:0)+(keys.ArrowRight?1:0);
+ player.x+=steer*(4.8+Math.abs(player.speed)*.4)*dt;
+ player.x=Math.max(W*.16+player.w/2+8,Math.min(W*.84-player.w/2-8,player.x));
+ roadOffset+=player.speed*dt*2;
+ distance+=Math.max(0,player.speed)*dt*.8;
+ for(const t of traffic){
+   t.y+=(t.s+Math.max(0,player.speed)*.6)*dt;
+   if(t.y>H+130){t.y=-100-Math.random()*350;t.x=laneX();score+=10}
+   if(collide(player,t))crash();
+ }
+ for(const c of coins){
+   c.y+=(Math.max(0,player.speed)*.8+2.2)*dt;
+   if(c.y>H+30){c.y=-100-Math.random()*400;c.x=laneX();c.got=false}
+   if(!c.got&&Math.hypot(player.x-c.x,player.y-c.y)<45){c.got=true;score+=25;for(let i=0;i<10;i++)spawnParticle(c.x,c.y)}
+ }
+ for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=.025*dt}
+ particles=particles.filter(p=>p.life>0);
+ if(distance>=d.target)endLevel();
+ updateHud();draw();
+}
+function loop(t){const dt=Math.min(2,(t-last)/16.67||1);last=t;update(dt);requestAnimationFrame(loop)}
+function showOverlay(title,text,button,fn){
+ $('overlayTitle').textContent=title;$('overlayText').textContent=text;
+ $('startBtn').textContent=button;$('startBtn').onclick=()=>{$('overlay').classList.add('hidden');fn()};
+ $('overlay').classList.remove('hidden');
+}
+function start(){running=true;paused=false;last=performance.now();$('pauseBtn').textContent='⏸ Pause / Resume';}
+function togglePause(){if(!running)return;paused=!paused;$('pauseBtn').textContent=paused?'▶ Resume':'⏸ Pause / Resume';}
+function changeGear(){gear=(gear+1)%3;updateHud()}
+$('startBtn').onclick=()=>{resetLevel();start();$('overlay').classList.add('hidden')};
+$('pauseBtn').onclick=togglePause;
+document.addEventListener('keydown',e=>{
+ if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code)||e.key===' '){e.preventDefault();keys[e.code]=true}
+ if(e.code==='KeyG')changeGear();
+ if(e.code==='KeyP')togglePause();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false});
+document.querySelectorAll('[data-key]').forEach(btn=>{
+ const k=btn.dataset.key;
+ const down=e=>{e.preventDefault();if(k==='KeyG'){changeGear();return}keys[k]=true};
+ const up=e=>{e.preventDefault();keys[k]=false};
+ btn.addEventListener('pointerdown',down);btn.addEventListener('pointerup',up);
+ btn.addEventListener('pointerleave',up);btn.addEventListener('pointercancel',up);
+});
+resetLevel();draw();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
